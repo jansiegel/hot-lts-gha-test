@@ -1,0 +1,148 @@
+name: Publish prerelease in NPM
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+    branches:
+      - 'develop'
+      - 'release/**'
+      - '!release/**-**'
+      - 'lts/**'
+  release:
+    types: [created]
+
+jobs:
+  pre-release:
+    name: Build and publish an experimental release (non-rc, non-stable)
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch') &&
+      ((github.event_name == 'workflow_dispatch' && !startsWith(github.ref_name, 'lts/')) ||
+       (github.event_name == 'workflow_run' && !startsWith(github.event.workflow_run.head_branch, 'lts/')))
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # https://github.com/actions/checkout/releases/tag/v4.1.1
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        name: Install pnpm
+
+      - name: Use Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # https://github.com/actions/setup-node/releases/tag/v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          registry-url: https://registry.npmjs.org/
+          cache: 'pnpm'
+      - run: |
+            echo "Run: pnpm install"
+            npm install -g npm@11.6 # Ensure npm 11.5.1 or later for trusted publishing
+      - run: |
+            echo "Run: npm run pre-release"
+  determine-version:
+    name: Determine version and npm tag
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'release' &&
+      (startsWith(github.event.release.target_commitish, 'release/') || startsWith(github.event.release.target_commitish, 'lts/'))
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      npm-tag: ${{ steps.npm-tag.outputs.tag }}
+    steps:
+      - name: Extract version from release tag
+        id: version
+        run: |
+          # Remove 'v' prefix if present (e.g., v1.0.0 -> 1.0.0)
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION=${VERSION#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Determine npm publish tag
+        id: npm-tag
+        run: |
+          if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+            echo "tag=rc" >> $GITHUB_OUTPUT
+            echo "Publishing as RC (pre-release)"
+          else
+            # Check if this release is marked as the latest on GitHub
+            RELEASE_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/latest")
+            LATEST_RELEASE_TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+            echo "Latest release tag: $LATEST_RELEASE_TAG"
+
+            if [[ "${LATEST_RELEASE_TAG}" == "${{ github.event.release.tag_name }}" ]]; then
+              echo "tag=latest" >> $GITHUB_OUTPUT
+              echo "Publishing as latest"
+            else
+              echo "tag=previous" >> $GITHUB_OUTPUT
+              echo "Publishing as previous"
+            fi
+          fi
+
+      - name: Display publication summary
+        run: |
+          {
+            echo "## 📦 Publication Summary"
+            echo ""
+            echo "The following release is ready to be published to npm:"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| **Version** | \`${{ steps.version.outputs.version }}\` |"
+            echo "| **Release Tag** | \`${{ github.event.release.tag_name }}\` |"
+            echo "| **npm Tag** | \`${{ steps.npm-tag.outputs.tag }}\` |"
+            echo "| **Target Branch** | \`${{ github.event.release.target_commitish }}\` |"
+            echo "| **Pre-release** | ${{ github.event.release.prerelease }} |"
+            echo "| **Release Name** | ${{ github.event.release.name }} |"
+            echo ""
+            if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+              echo "⚠️ **Note:** This is a pre-release and will be published with the \`rc\` tag."
+            elif [[ "${{ steps.npm-tag.outputs.tag }}" == "latest" ]]; then
+              echo "✅ **Note:** This release will be published as \`latest\` and will be the default version installed by users."
+            else
+              echo "ℹ️ **Note:** This release will be published with the \`previous\` tag (not as latest)."
+            fi
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Next step:** The release job will proceed after approval from the \`approvers\` environment."
+          } >> $GITHUB_STEP_SUMMARY
+  release:
+    name: Build and publish a release
+    runs-on: ubuntu-latest
+    needs: [determine-version]
+    environment: approvers
+    if: |
+      github.event_name == 'release' &&
+      (startsWith(github.event.release.target_commitish, 'release/') || startsWith(github.event.release.target_commitish, 'lts/'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # https://github.com/actions/checkout/releases/tag/v4.1.1
+        with:
+          ref: ${{ github.event.release.target_commitish }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Use Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # https://github.com/actions/setup-node/releases/tag/v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          registry-url: https://registry.npmjs.org/
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: |
+          echo "Run: pnpm install"
+          npm install -g npm@11.6 # Ensure npm 11.5.1 or later for trusted publishing
+      - name: Update all package versions
+        run: |
+          echo "Run: node -e \"import { setVersion } from './scripts/utils/pre-release.mjs'; setVersion('${{ needs.determine-version.outputs.version }}');\""
+      - name: Build all packages
+        run: |
+          echo "Run: npm run all build -- -e=examples visual-tests"
+      - name: Publish all packages
+        run: |
+          echo "Run: npm run publish-all -- --cmdArgs tag=${{ needs.determine-version.outputs.npm-tag }}"
