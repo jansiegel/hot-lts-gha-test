@@ -1,3 +1,11 @@
 {
-  "packageManager": "pnpm@9"
+  "name": "hot-lts-gha-test",
+  "version": "1.0.0",
+  "description": "",
+  "packageManager": "pnpm@9",
+  "scripts": {
+    "all": "echo 'Running all' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
+    "pre-release": "echo 'Running pre-release' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
+    "publish-all": "echo 'Running publish-all' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\""
+  }
 }

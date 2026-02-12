@@ -1,15 +1,19 @@
-name: Publish prerelease in NPM
+name: Publish a release in NPM
 
 on:
   workflow_dispatch:
   push:
-   branches:
+    branches:
       - 'develop'
       - 'release/**'
       - '!release/**-**'
       - 'lts/**'
   release:
     types: [created]
+
+# permissions:
+#   id-token: write  # Required for OIDC
+#   contents: write
 
 jobs:
   pre-release:
@@ -33,10 +37,10 @@ jobs:
           registry-url: https://registry.npmjs.org/
           cache: 'pnpm'
       - run: |
-            echo "Run: pnpm install"
+            pnpm install
             npm install -g npm@11.6 # Ensure npm 11.5.1 or later for trusted publishing
       - run: |
-            echo "Run: npm run pre-release"
+            npm run pre-release
   determine-version:
     name: Determine version and npm tag
     runs-on: ubuntu-latest
@@ -107,6 +111,7 @@ jobs:
             echo ""
             echo "**Next step:** The release job will proceed after approval from the \`approvers\` environment."
           } >> $GITHUB_STEP_SUMMARY
+
   release:
     name: Build and publish a release
     runs-on: ubuntu-latest
@@ -133,14 +138,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          echo "Run: pnpm install"
+          pnpm install
           npm install -g npm@11.6 # Ensure npm 11.5.1 or later for trusted publishing
       - name: Update all package versions
         run: |
-          echo "Run: node -e \"import { setVersion } from './scripts/utils/pre-release.mjs'; setVersion('${{ needs.determine-version.outputs.version }}');\""
+          node -e "
+            import { setVersion } from './scripts/utils/pre-release.mjs';
+            setVersion('${{ needs.determine-version.outputs.version }}');
+          "
       - name: Build all packages
-        run: |
-          echo "Run: npm run all build -- -e=examples visual-tests"
+        run: npm run all build -- -e=examples visual-tests
       - name: Publish all packages
-        run: |
-          echo "Run: npm run publish-all -- --cmdArgs tag=${{ needs.determine-version.outputs.npm-tag }}"
+        run: npm run publish-all -- --cmdArgs tag=${{ needs.determine-version.outputs.npm-tag }}
