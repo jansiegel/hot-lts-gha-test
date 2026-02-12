@@ -2,11 +2,6 @@ name: Publish prerelease in NPM
 
 on:
   workflow_dispatch:
-    inputs:
-      test-all:
-        description: 'Test all?'
-        type: boolean
-        default: false
   push:
    branches:
       - 'develop'
