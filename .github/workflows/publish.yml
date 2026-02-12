@@ -65,8 +65,9 @@ jobs:
         id: npm-tag
         run: |
           if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
-            echo "tag=rc" >> $GITHUB_OUTPUT
-            echo "Publishing as RC (pre-release)"
+            NPM_TAG="next"
+            echo "tag=$NPM_TAG" >> $GITHUB_OUTPUT
+            echo "Publishing as $NPM_TAG"
           else
             # Check if this release is marked as the latest on GitHub
             RELEASE_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -75,11 +76,13 @@ jobs:
             echo "Latest release tag: $LATEST_RELEASE_TAG"
 
             if [[ "${LATEST_RELEASE_TAG}" == "${{ github.event.release.tag_name }}" ]]; then
-              echo "tag=latest" >> $GITHUB_OUTPUT
-              echo "Publishing as latest"
+              NPM_TAG="latest"
+              echo "tag=$NPM_TAG" >> $GITHUB_OUTPUT
+              echo "Publishing as $NPM_TAG"
             else
-              echo "tag=previous" >> $GITHUB_OUTPUT
-              echo "Publishing as previous"
+              NPM_TAG="previous"
+              echo "tag=$NPM_TAG" >> $GITHUB_OUTPUT
+              echo "Publishing as $NPM_TAG"
             fi
           fi
 
@@ -90,8 +93,6 @@ jobs:
             echo ""
             echo "The following release is ready to be published to npm:"
             echo ""
-            echo "| Property | Value |"
-            echo "|----------|-------|"
             echo "| **Version** | \`${{ steps.version.outputs.version }}\` |"
             echo "| **Release Tag** | \`${{ github.event.release.tag_name }}\` |"
             echo "| **npm Tag** | \`${{ steps.npm-tag.outputs.tag }}\` |"
@@ -100,11 +101,11 @@ jobs:
             echo "| **Release Name** | ${{ github.event.release.name }} |"
             echo ""
             if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
-              echo "⚠️ **Note:** This is a pre-release and will be published with the \`rc\` tag."
+              echo "⚠️ **Note:** This is a pre-release and will be published with the \`${{ steps.npm-tag.outputs.tag }}\` tag."
             elif [[ "${{ steps.npm-tag.outputs.tag }}" == "latest" ]]; then
-              echo "✅ **Note:** This release will be published as \`latest\` and will be the default version installed by users."
+              echo "✅ **Note:** This release will be published as \`${{ steps.npm-tag.outputs.tag }}\` and will be the default version installed by users."
             else
-              echo "ℹ️ **Note:** This release will be published with the \`previous\` tag (not as latest)."
+              echo "ℹ️ **Note:** This release will be published with the \`${{ steps.npm-tag.outputs.tag }}\` tag."
             fi
             echo ""
             echo "---"
