@@ -1,0 +1,341 @@
+name: Code Freeze
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 12.0.0)'
+        required: true
+        type: string
+      release_date:
+        description: 'Release date in DD/MM/YYYY format'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (log actions without executing them)'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
+
+permissions:
+  contents: read   # DRY RUN: changed from 'write' to prevent git pushes. Revert to 'write' when done testing.
+  actions: read    # Required to query workflow run status
+
+jobs:
+  validate-and-check:
+    name: Validate Inputs and Check Branch
+    runs-on: ubuntu-latest
+    outputs:
+      release-branch: ${{ steps.branch.outputs.release-branch }}
+      version: ${{ steps.validate.outputs.version }}
+      tests-already-passed: ${{ steps.check-tests.outputs.passed }}
+    steps:
+      - name: Verify workflow is running from develop
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/develop" ]; then
+            echo "::error::This workflow must be triggered from the 'develop' branch. Current ref: ${{ github.ref }}"
+            exit 1
+          fi
+
+      - name: Checkout develop
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # https://github.com/actions/checkout/releases/tag/v4.1.1
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Setup Node.js for validation
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # https://github.com/actions/setup-node/releases/tag/v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install dependencies for validation
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate version format
+        id: validate
+        run: |
+          VERSION='${{ inputs.version }}'
+          node -e "
+            import { isVersionValid } from './scripts/utils/pre-release.mjs';
+            if (!isVersionValid('$VERSION')) {
+              console.error('Error: Invalid version format: $VERSION (expected semver format: X.Y.Z)');
+              process.exit(1);
+            }
+          "
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Validated version: $VERSION"
+
+      - name: Validate release date format
+        run: |
+          RELEASE_DATE='${{ inputs.release_date }}'
+          node -e "
+            import { validateReleaseDate } from './scripts/utils/pre-release.mjs';
+            const validation = validateReleaseDate('$RELEASE_DATE');
+            if (!validation.valid) {
+              console.error('Error: ' + validation.error);
+              process.exit(1);
+            }
+          "
+
+      - name: Check if release branch exists
+        id: branch
+        run: |
+          VERSION='${{ inputs.version }}'
+          RELEASE_BRANCH="release/$VERSION"
+          echo "release-branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
+
+          if git ls-remote --heads origin "$RELEASE_BRANCH" | grep -q "$RELEASE_BRANCH"; then
+            echo "::error::Code freeze for version $VERSION was done previously. The code is on branch $RELEASE_BRANCH"
+            exit 1
+          fi
+          echo "Release branch $RELEASE_BRANCH does not exist, proceeding with code freeze"
+
+      - name: Check if tests already passed for latest develop commit
+        id: check-tests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT_SHA=$(git rev-parse HEAD)
+          echo "Checking for successful test runs on commit $COMMIT_SHA"
+
+          RESULT=$(gh api "repos/${{ github.repository }}/actions/workflows/test.yml/runs?head_sha=$COMMIT_SHA&status=success&per_page=1" --jq '.total_count')
+
+          if [ "$RESULT" -gt 0 ]; then
+            echo "passed=true" >> $GITHUB_OUTPUT
+            echo "Tests already passed for this commit, skipping test run"
+          else
+            echo "passed=false" >> $GITHUB_OUTPUT
+            echo "No successful test run found, tests will be triggered"
+          fi
+
+  run-tests:
+    name: Run Tests on Develop
+    needs: [validate-and-check]
+    if: needs.validate-and-check.outputs.tests-already-passed != 'true'
+    uses: ./.github/workflows/test.yml
+    with:
+      test-all: true
+    secrets: inherit
+
+  create-release-branch:
+    name: Create Release Branch
+    needs: [validate-and-check, run-tests]
+    if: |
+      always() &&
+      needs.validate-and-check.result == 'success' &&
+      (needs.run-tests.result == 'success' || needs.run-tests.result == 'skipped')
+    runs-on: ubuntu-latest
+    outputs:
+      release-branch: ${{ needs.validate-and-check.outputs.release-branch }}
+      version: ${{ needs.validate-and-check.outputs.version }}
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # https://github.com/actions/checkout/releases/tag/v4.1.1
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push release branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_BRANCH='${{ needs.validate-and-check.outputs.release-branch }}'
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          git checkout -b "$RELEASE_BRANCH"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] Would push release branch: $RELEASE_BRANCH"
+          else
+            git push -u origin "$RELEASE_BRANCH"
+            echo "Created release branch: $RELEASE_BRANCH"
+          fi
+
+      - name: Create LTS branch for previous even major version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION='${{ needs.validate-and-check.outputs.version }}'
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+
+          # Only proceed for x.0.0 versions
+          if [ "$MINOR" != "0" ] || [ "$PATCH" != "0" ]; then
+            echo "Not a x.0.0 version ($VERSION), skipping LTS branch creation"
+            exit 0
+          fi
+
+          PREV_MAJOR=$((MAJOR - 1))
+
+          # Only create LTS branch if previous major is even
+          if [ $((PREV_MAJOR % 2)) -ne 0 ]; then
+            echo "Previous major version ($PREV_MAJOR) is odd, skipping LTS branch creation"
+            exit 0
+          fi
+
+          LTS_BRANCH="lts/${PREV_MAJOR}.x"
+
+          # Check if LTS branch already exists
+          if git ls-remote --heads origin "$LTS_BRANCH" | grep -q "$LTS_BRANCH"; then
+            echo "LTS branch $LTS_BRANCH already exists, skipping"
+            exit 0
+          fi
+
+          echo "Creating LTS branch $LTS_BRANCH from master"
+          git fetch origin master
+          git checkout -b "$LTS_BRANCH" origin/master
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] Would push LTS branch: $LTS_BRANCH"
+          else
+            git push -u origin "$LTS_BRANCH"
+            echo "Created LTS branch: $LTS_BRANCH"
+          fi
+
+          # Switch back to the release branch for subsequent jobs
+          git checkout '${{ needs.validate-and-check.outputs.release-branch }}'
+
+  freeze:
+    name: Code Freeze
+    runs-on: ubuntu-latest
+    needs: [validate-and-check, run-tests, create-release-branch]
+    if: |
+      always() &&
+      needs.validate-and-check.result == 'success' &&
+      needs.create-release-branch.result == 'success' &&
+      (needs.run-tests.result == 'success' || needs.run-tests.result == 'skipped')
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # https://github.com/actions/checkout/releases/tag/v4.1.1
+        with:
+          # In dry-run the branch was not pushed to remote, so check out develop instead
+          ref: ${{ env.DRY_RUN == 'true' && 'develop' || needs.create-release-branch.outputs.release-branch }}
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+
+      - name: Use Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # https://github.com/actions/setup-node/releases/tag/v4.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Check npm version
+        run: |
+          NPM_VERSION=$(npm --version)
+          echo "Current npm version: $NPM_VERSION"
+          node -e "
+            import semver from 'semver';
+            const npmVersion = '$NPM_VERSION'.trim();
+            if (!semver.satisfies(npmVersion, '>=7.17.0')) {
+              console.error('Error: The minimum required npm version is 7.17.0 (found ' + npmVersion + ')');
+              process.exit(1);
+            }
+          "
+
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git status -s)" ]; then
+            echo "Error: There are uncommitted changes present. Exiting."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          pnpm install
+
+      - name: Update version and release date
+        id: version
+        run: |
+          FINAL_VERSION='${{ needs.create-release-branch.outputs.version }}'
+          RELEASE_DATE='${{ inputs.release_date }}'
+
+          node -e "
+            import { setVersion, setReleaseDate, isVersionValid } from './scripts/utils/pre-release.mjs';
+
+            const finalVersion = '${{ needs.create-release-branch.outputs.version }}';
+            const releaseDate = '${{ inputs.release_date }}';
+
+            if (!isVersionValid(finalVersion)) {
+              throw new Error('Invalid version: ' + finalVersion);
+            }
+
+            console.log('Setting version to:', finalVersion);
+            console.log('Setting release date to:', releaseDate);
+
+            setVersion(finalVersion);
+            setReleaseDate(releaseDate);
+          "
+
+          echo "version=$FINAL_VERSION" >> $GITHUB_OUTPUT
+          echo "Final version: $FINAL_VERSION"
+
+      - name: Clean node_modules and lock files
+        run: |
+          node -e "
+            import { cleanNodeModules } from './scripts/utils/filesystem.mjs';
+            cleanNodeModules();
+          "
+
+      - name: Install fresh dependencies
+        run: |
+          pnpm install --force
+
+      - name: Clean old package builds
+        run: |
+          npm run all clean -- --e examples
+
+      - name: Build all packages (except examples)
+        run: |
+          npm run all build -- --e examples
+
+      - name: Install next package for examples
+        run: |
+          npm run examples:install next
+
+      - name: Build examples directory
+        run: |
+          npm run in examples build
+
+      - name: Verify bundles have correct version
+        run: |
+          node ./scripts/verify-bundles.mjs
+
+      - name: Generate CHANGELOG.md
+        run: |
+          echo "" | npm run changelog consume
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] Would commit with message: ${{ steps.version.outputs.version }}"
+            echo "[DRY RUN] Files that would be committed:"
+            git diff --cached --name-only
+          else
+            git commit -m "${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          fi
+
+      - name: Push changes to remote
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] Would push to: ${{ needs.create-release-branch.outputs.release-branch }}"
+          else
+            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+            git push origin HEAD:${{ needs.create-release-branch.outputs.release-branch }}
+          fi

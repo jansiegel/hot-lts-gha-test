@@ -2,18 +2,28 @@ name: Publish a release in NPM
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'develop'
-      - 'release/**'
-      - '!release/**-**'
-      - 'lts/**'
+    inputs:
+      dry_run:
+        description: 'Dry run (log actions without executing them)'
+        required: false
+        type: boolean
+        default: true
+  #  push:
+  #    branches:
+  #      - 'develop'
+  #      - 'release/**'
+  #      - 'lts/**'
   release:
     types: [created]
 
-# permissions:
-#   id-token: write  # Required for OIDC
-#   contents: write
+# DRY_RUN_DEFAULT: Set to 'true' to enable dry-run for push/release triggers.
+# workflow_dispatch uses its own input. Flip to 'false' when done testing.
+env:
+  DRY_RUN_DEFAULT: 'true'
+
+permissions:
+  id-token: read   # DRY RUN: changed from 'write' to prevent OIDC npm publishing. Revert to 'write' when done testing.
+  contents: read   # DRY RUN: changed from 'write' to prevent git pushes. Revert to 'write' when done testing.
 
 jobs:
   pre-release:
@@ -37,10 +47,18 @@ jobs:
           registry-url: https://registry.npmjs.org/
           cache: 'pnpm'
       - run: |
-            pnpm install
-            npm install -g npm@11.6 # Ensure npm 11.5.1 or later for trusted publishing
-      - run: |
+          pnpm install
+          npm install -g npm@11.6 # Ensure npm 11.5.1 or later for trusted publishing
+      - name: Publish pre-release
+        env:
+          DRY_RUN: ${{ inputs.dry_run != '' && format('{0}', inputs.dry_run) || env.DRY_RUN_DEFAULT }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] Would run: npm run pre-release"
+            echo "[DRY RUN] Branch: ${{ github.ref_name }}"
+          else
             npm run pre-release
+          fi
   determine-version:
     name: Determine version and npm tag
     runs-on: ubuntu-latest
@@ -92,6 +110,8 @@ jobs:
             echo ""
             echo "The following release is ready to be published to npm:"
             echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
             echo "| **Version** | \`${{ steps.version.outputs.version }}\` |"
             echo "| **Release Tag** | \`${{ github.event.release.tag_name }}\` |"
             echo "| **npm Tag** | \`${{ steps.npm-tag.outputs.tag }}\` |"
@@ -149,4 +169,37 @@ jobs:
       - name: Build all packages
         run: npm run all build -- -e=examples visual-tests
       - name: Publish all packages
-        run: npm run publish-all -- --cmdArgs tag=${{ needs.determine-version.outputs.npm-tag }}
+        env:
+          DRY_RUN: ${{ inputs.dry_run != '' && format('{0}', inputs.dry_run) || env.DRY_RUN_DEFAULT }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] Would run: npm run publish-all -- --cmdArgs tag=${{ needs.determine-version.outputs.npm-tag }}"
+            echo "[DRY RUN] Version: ${{ needs.determine-version.outputs.version }}"
+            echo "[DRY RUN] npm tag: ${{ needs.determine-version.outputs.npm-tag }}"
+          else
+            npm run publish-all -- --cmdArgs tag=${{ needs.determine-version.outputs.npm-tag }}
+          fi
+      - name: Display publication summary
+        run: |
+          {
+            echo "## ✅ Publication Complete"
+            echo ""
+            echo "The following release has been successfully published to npm:"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| **Version** | \`${{ needs.determine-version.outputs.version }}\` |"
+            echo "| **Release Tag** | \`${{ github.event.release.tag_name }}\` |"
+            echo "| **npm Tag** | \`${{ needs.determine-version.outputs.npm-tag }}\` |"
+            echo "| **Target Branch** | \`${{ github.event.release.target_commitish }}\` |"
+            echo "| **Pre-release** | ${{ github.event.release.prerelease }} |"
+            echo "| **Release Name** | ${{ github.event.release.name }} |"
+            echo ""
+            if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+              echo "⚠️ **Note:** This pre-release was published with the \`${{ needs.determine-version.outputs.npm-tag }}\` tag."
+            elif [[ "${{ needs.determine-version.outputs.npm-tag }}" == "latest" ]]; then
+              echo "✅ **Note:** This release was published as \`${{ needs.determine-version.outputs.npm-tag }}\` and is now the default version installed by users."
+            else
+              echo "ℹ️ **Note:** This release was published with the \`${{ needs.determine-version.outputs.npm-tag }}\` tag."
+            fi
+          } >> $GITHUB_STEP_SUMMARY
