@@ -193,9 +193,17 @@ jobs:
             exit 0
           fi
 
-          echo "Creating LTS branch $LTS_BRANCH from master"
-          git fetch origin master
-          git checkout -b "$LTS_BRANCH" origin/master
+          # Find the latest version tag for the previous major version
+          git fetch --tags origin
+          LATEST_TAG=$(git tag --list "${PREV_MAJOR}.*" --sort=-version:refname | head -n 1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "::error::No tags found for major version ${PREV_MAJOR}. Cannot create LTS branch."
+            exit 1
+          fi
+
+          echo "Creating LTS branch $LTS_BRANCH from tag $LATEST_TAG"
+          git checkout -b "$LTS_BRANCH" "$LATEST_TAG"
           if [ "$DRY_RUN" = "true" ]; then
             echo "[DRY RUN] Would push LTS branch: $LTS_BRANCH"
           else
@@ -232,9 +240,11 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Check npm version
         run: |
-          pnpm install
           NPM_VERSION=$(npm --version)
           echo "Current npm version: $NPM_VERSION"
           node -e "
