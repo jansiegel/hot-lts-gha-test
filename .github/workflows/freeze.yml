@@ -21,7 +21,7 @@ env:
   DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
 
 permissions:
-  contents: read   # DRY RUN: changed from 'write' to prevent git pushes. Revert to 'write' when done testing.
+#  contents: read   # DRY RUN: changed from 'write' to prevent git pushes. Revert to 'write' when done testing.
   actions: read    # Required to query workflow run status
 
 jobs:
