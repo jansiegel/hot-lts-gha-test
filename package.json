@@ -6,7 +6,10 @@
   "scripts": {
     "all": "echo 'Running all' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
     "pre-release": "echo 'Running pre-release' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
-    "publish-all": "echo 'Running publish-all' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\""
+    "publish-all": "echo 'Running publish-all' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
+    "examples:install": "echo '[mock] examples:install' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
+    "in": "echo '[mock] in' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
+    "changelog": "echo '[mock] changelog' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\""
   },
   "dependencies": {
     "semver": "^7.7.4"
