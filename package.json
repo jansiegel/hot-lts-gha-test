@@ -4,7 +4,7 @@
   "description": "",
   "packageManager": "pnpm@9",
   "scripts": {
-    "all": "echo 'Running all' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
+    "all": "node ./scripts/mock-all.mjs",
     "pre-release": "echo 'Running pre-release' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
     "publish-all": "echo 'Running publish-all' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
     "examples:install": "echo '[mock] examples:install' && echo 'Arguments:' && node -e \"process.argv.slice(2).forEach((arg, i) => console.log('  ' + (i + 1) + '. ' + arg))\"",
