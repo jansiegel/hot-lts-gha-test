@@ -233,6 +233,7 @@ jobs:
 
       - name: Check npm version
         run: |
+          pnpm install
           NPM_VERSION=$(npm --version)
           echo "Current npm version: $NPM_VERSION"
           node -e "
