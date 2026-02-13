@@ -22,7 +22,7 @@ env:
   DRY_RUN_DEFAULT: 'true'
 
 permissions:
-  id-token: read   # DRY RUN: changed from 'write' to prevent OIDC npm publishing. Revert to 'write' when done testing.
+#  id-token: read   # DRY RUN: changed from 'write' to prevent OIDC npm publishing. Revert to 'write' when done testing.
   contents: read   # DRY RUN: changed from 'write' to prevent git pushes. Revert to 'write' when done testing.
 
 jobs:
